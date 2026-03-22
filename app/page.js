@@ -352,7 +352,7 @@ export default function CanaanRoadWatch() {
 
   const fetchData = useCallback(async () => {
     const [roadsRes, reportsRes] = await Promise.all([
-      supabase.from('road_status').select('*').order('name'),
+      supabase.from('road_status').select('*').order('name').range(0, 2000),
       supabase.from('reports').select('*').order('created_at', { ascending: false }),
     ])
     if (roadsRes.error) { setError(roadsRes.error.message); return }
