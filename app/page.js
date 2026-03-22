@@ -359,7 +359,7 @@ export default function CanaanRoadWatch() {
       supabase.from('reports').select('*').order('created_at', { ascending: false }),
     ])
     if (roadsRes.error) { setError(roadsRes.error.message); return }
-const rawRoads = roadsRes.data || []
+    const rawRoads = roadsRes.data || []
     const dedupedRoads = Object.values(
       rawRoads.reduce((acc, road) => {
         const key = road.name.toLowerCase()
@@ -377,7 +377,8 @@ const rawRoads = roadsRes.data || []
         return acc
       }, {})
     ).sort((a, b) => a.name.localeCompare(b.name))
-    setRoads(dedupedRoads)    setReports(reportsRes.data || [])
+    setRoads(dedupedRoads)  
+    setReports(reportsRes.data || [])
     setLoading(false)
   }, [])
 
