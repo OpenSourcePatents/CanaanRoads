@@ -27,11 +27,11 @@ type Report = {
 };
 
 function getColor(count: number): string {
-  if (count === 0) return '#22c55e';   // green
-  if (count === 1) return '#84cc16';   // lime
-  if (count === 2) return '#eab308';   // yellow
-  if (count === 3) return '#f97316';   // orange
-  if (count >= 4) return '#ef4444';    // red
+  if (count === 0) return '#22c55e';
+  if (count === 1) return '#84cc16';
+  if (count === 2) return '#eab308';
+  if (count === 3) return '#f97316';
+  if (count >= 4) return '#ef4444';
   return '#22c55e';
 }
 
@@ -54,13 +54,12 @@ export default function MapPage() {
 
   useEffect(() => {
     async function loadData() {
-      // Load all roads
       const { data: roadsData } = await supabase
         .from('roads')
         .select('id, name, osm_id, highway, lat, lng')
-        .order('name');
+        .order('name')
+        .range(0, 2000);
 
-      // Load all reports to count per road
       const { data: reportsData } = await supabase
         .from('reports')
         .select('road_id');
@@ -95,7 +94,6 @@ export default function MapPage() {
       map.current.on('load', async () => {
         const enriched = await loadData();
 
-        // Add markers for roads that have lat/lng
         enriched.forEach((road) => {
           if (!road.lat || !road.lng || !map.current) return;
 
@@ -137,7 +135,6 @@ export default function MapPage() {
     r.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Deduplicate by name for the sidebar list
   const uniqueRoads = Object.values(
     filteredRoads.reduce((acc, road) => {
       const key = road.name.toLowerCase();
@@ -163,55 +160,17 @@ export default function MapPage() {
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      background: '#0a0a0f',
-      color: '#e2e8f0',
-      fontFamily: "'DM Mono', monospace",
-    }}>
-      {/* Header */}
-      <div style={{
-        padding: '12px 20px',
-        borderBottom: '1px solid #1e2330',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        background: '#0d0f1a',
-        flexShrink: 0,
-      }}>
-        <a href="/" style={{ color: '#64748b', textDecoration: 'none', fontSize: '13px' }}>
-          ← Back
-        </a>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0a0a0f', color: '#e2e8f0', fontFamily: "'DM Mono', monospace" }}>
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid #1e2330', display: 'flex', alignItems: 'center', gap: '16px', background: '#0d0f1a', flexShrink: 0 }}>
+        <a href="/" style={{ color: '#64748b', textDecoration: 'none', fontSize: '13px' }}>← Back</a>
         <span style={{ color: '#1e2330' }}>|</span>
-        <span style={{ fontSize: '14px', fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em' }}>
-          CANAAN ROAD WATCH
-        </span>
-        <span style={{ fontSize: '12px', color: '#22c55e', marginLeft: 'auto' }}>
-          ● LIVE MAP
-        </span>
+        <span style={{ fontSize: '14px', fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em' }}>CANAAN ROAD WATCH</span>
+        <span style={{ fontSize: '12px', color: '#22c55e', marginLeft: 'auto' }}>● LIVE MAP</span>
       </div>
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Sidebar */}
-        <div style={{
-          width: '300px',
-          flexShrink: 0,
-          background: '#0d0f1a',
-          borderRight: '1px solid #1e2330',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}>
-          {/* Stats bar */}
-          <div style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #1e2330',
-            display: 'flex',
-            gap: '8px',
-            flexWrap: 'wrap',
-          }}>
+        <div style={{ width: '300px', flexShrink: 0, background: '#0d0f1a', borderRight: '1px solid #1e2330', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #1e2330', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {[
               { label: 'Clear', count: stats.clear, color: '#22c55e' },
               { label: 'Minor', count: stats.minor, color: '#84cc16' },
@@ -226,114 +185,46 @@ export default function MapPage() {
             ))}
           </div>
 
-          {/* Search */}
           <div style={{ padding: '10px 16px', borderBottom: '1px solid #1e2330' }}>
             <input
               placeholder="Search roads..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              style={{
-                width: '100%',
-                background: '#151823',
-                border: '1px solid #1e2330',
-                borderRadius: '6px',
-                padding: '7px 10px',
-                color: '#e2e8f0',
-                fontSize: '12px',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
+              style={{ width: '100%', background: '#151823', border: '1px solid #1e2330', borderRadius: '6px', padding: '7px 10px', color: '#e2e8f0', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }}
             />
           </div>
 
-          {/* Road list */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {loading ? (
-              <div style={{ padding: '20px', color: '#64748b', fontSize: '12px', textAlign: 'center' }}>
-                Loading roads...
-              </div>
+              <div style={{ padding: '20px', color: '#64748b', fontSize: '12px', textAlign: 'center' }}>Loading roads...</div>
             ) : uniqueRoads.map(road => (
               <div
                 key={road.id}
                 onClick={() => flyTo(road)}
-                style={{
-                  padding: '10px 16px',
-                  borderBottom: '1px solid #111420',
-                  cursor: 'pointer',
-                  background: selectedRoad?.name === road.name ? '#151823' : 'transparent',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  transition: 'background 0.1s',
-                }}
+                style={{ padding: '10px 16px', borderBottom: '1px solid #111420', cursor: 'pointer', background: selectedRoad?.name === road.name ? '#151823' : 'transparent', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.1s' }}
                 onMouseEnter={e => (e.currentTarget.style.background = '#151823')}
                 onMouseLeave={e => (e.currentTarget.style.background = selectedRoad?.name === road.name ? '#151823' : 'transparent')}
               >
-                <div style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: '50%',
-                  background: getColor(road.report_count),
-                  flexShrink: 0,
-                  boxShadow: `0 0 5px ${getColor(road.report_count)}66`,
-                }} />
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: getColor(road.report_count), flexShrink: 0, boxShadow: `0 0 5px ${getColor(road.report_count)}66` }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '12px', color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {road.name}
-                  </div>
-                  {road.highway && (
-                    <div style={{ fontSize: '10px', color: '#475569', marginTop: '1px' }}>
-                      {road.highway}
-                    </div>
-                  )}
+                  <div style={{ fontSize: '12px', color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{road.name}</div>
+                  {road.highway && <div style={{ fontSize: '10px', color: '#475569', marginTop: '1px' }}>{road.highway}</div>}
                 </div>
-                <span style={{
-                  fontSize: '10px',
-                  color: getColor(road.report_count),
-                  flexShrink: 0,
-                }}>
-                  {getStatus(road.report_count)}
-                </span>
+                <span style={{ fontSize: '10px', color: getColor(road.report_count), flexShrink: 0 }}>{getStatus(road.report_count)}</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Map */}
         <div style={{ flex: 1, position: 'relative' }}>
           <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
 
-          {/* Selected road popup */}
           {selectedRoad && (
-            <div style={{
-              position: 'absolute',
-              bottom: '24px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: '#0d0f1a',
-              border: `1px solid ${getColor(selectedRoad.report_count)}44`,
-              borderRadius: '10px',
-              padding: '14px 20px',
-              minWidth: '260px',
-              boxShadow: `0 0 20px ${getColor(selectedRoad.report_count)}22`,
-            }}>
+            <div style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: '#0d0f1a', border: `1px solid ${getColor(selectedRoad.report_count)}44`, borderRadius: '10px', padding: '14px 20px', minWidth: '260px', boxShadow: `0 0 20px ${getColor(selectedRoad.report_count)}22` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                <div style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: '50%',
-                  background: getColor(selectedRoad.report_count),
-                  boxShadow: `0 0 8px ${getColor(selectedRoad.report_count)}`,
-                }} />
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>
-                  {selectedRoad.name}
-                </span>
-                <button
-                  onClick={() => setSelectedRoad(null)}
-                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: '16px' }}
-                >
-                  ×
-                </button>
+                <div style={{ width: 12, height: 12, borderRadius: '50%', background: getColor(selectedRoad.report_count), boxShadow: `0 0 8px ${getColor(selectedRoad.report_count)}` }} />
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#e2e8f0' }}>{selectedRoad.name}</span>
+                <button onClick={() => setSelectedRoad(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: '16px' }}>×</button>
               </div>
               <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: '#64748b' }}>
                 <span>Status: <span style={{ color: getColor(selectedRoad.report_count) }}>{getStatus(selectedRoad.report_count)}</span></span>
@@ -343,17 +234,7 @@ export default function MapPage() {
             </div>
           )}
 
-          {/* Legend */}
-          <div style={{
-            position: 'absolute',
-            top: '16px',
-            left: '16px',
-            background: 'rgba(13,15,26,0.9)',
-            border: '1px solid #1e2330',
-            borderRadius: '8px',
-            padding: '10px 14px',
-            fontSize: '11px',
-          }}>
+          <div style={{ position: 'absolute', top: '16px', left: '16px', background: 'rgba(13,15,26,0.9)', border: '1px solid #1e2330', borderRadius: '8px', padding: '10px 14px', fontSize: '11px' }}>
             <div style={{ color: '#475569', marginBottom: '6px', letterSpacing: '0.08em' }}>ISSUE LEVEL</div>
             {[
               { label: 'Clear (0)', color: '#22c55e' },
