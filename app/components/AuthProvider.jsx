@@ -39,7 +39,9 @@ export function AuthProvider({ children }) {
   }
 
   const isAdmin = role === 'admin'
-  const isWorker = role === 'road_worker' || role === 'admin'
+  const isPolice = role === 'police'
+  const isAgent = role === 'road_agent' || role === 'road_worker' // backward compat
+  const isOfficial = isAdmin || isPolice || isAgent // any privileged role
   const isLoggedIn = !!user
 
   const canEditReport = (report) => {
@@ -51,11 +53,16 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, profile, role, loading,
-      isAdmin, isWorker, isLoggedIn,
+      isAdmin, isPolice, isAgent, isOfficial, isLoggedIn,
       canEditReport,
       canSubmitClear: isLoggedIn,
       canApproveClear: isAdmin,
-      canUpdateStatus: isWorker,
+      canUpdateStatus: isOfficial,       // agent, police, admin can update report status
+      canClosureRoad: isOfficial,         // agent, police, admin can close/reopen roads
+      canCreateAlert: isOfficial,         // agent, police, admin can file safety alerts
+      canPostConstruction: isOfficial,    // agent, police, admin can post construction notices
+      canViewPoliceOnly: isPolice || isAdmin,
+      canViewOfficialsOnly: isOfficial,
       signOut,
       refreshProfile: () => loadProfile(user),
     }}>
