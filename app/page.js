@@ -45,9 +45,6 @@ function SeverityDot({ severity }) {
   return <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: c[severity] || '#888', boxShadow: `0 0 6px ${(c[severity]||'#888')}88`, marginRight: 6, verticalAlign: 'middle' }} />
 }
 
-// ═══════════════════════════════════════════════════════════
-// ADD ROAD MODAL
-// ═══════════════════════════════════════════════════════════
 function AddRoadModal({ onClose, onAdded }) {
   const [name, setName] = useState('')
   const [segment, setSegment] = useState('')
@@ -133,9 +130,6 @@ function AddRoadModal({ onClose, onAdded }) {
   )
 }
 
-// ═══════════════════════════════════════════════════════════
-// REPORT FORM MODAL (with photo upload)
-// ═══════════════════════════════════════════════════════════
 function ReportModal({ roads, onClose, onSubmitted }) {
   const [roadId, setRoadId] = useState('')
   const [type, setType] = useState('pothole')
@@ -175,7 +169,6 @@ function ReportModal({ roads, onClose, onSubmitted }) {
 
     let photoUrl = null
 
-    // Upload photo if present
     if (photo) {
       const ext = photo.name.split('.').pop()
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${ext}`
@@ -250,7 +243,6 @@ function ReportModal({ roads, onClose, onSubmitted }) {
                 rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5, fontFamily: 'inherit' }} />
             </div>
 
-            {/* PHOTO UPLOAD */}
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>Photo Evidence</label>
               <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto}
@@ -278,7 +270,6 @@ function ReportModal({ roads, onClose, onSubmitted }) {
               )}
             </div>
 
-            {/* GPS */}
             <div style={{ marginBottom: 20, display: 'flex', gap: 10, alignItems: 'center' }}>
               <button onClick={getLocation} style={{
                 ...btnBase, padding: '10px 16px',
@@ -313,9 +304,6 @@ function ReportModal({ roads, onClose, onSubmitted }) {
   )
 }
 
-// ═══════════════════════════════════════════════════════════
-// DISPUTE MODAL
-// ═══════════════════════════════════════════════════════════
 function DisputeModal({ report, onClose, onSubmitted }) {
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -348,9 +336,6 @@ function DisputeModal({ report, onClose, onSubmitted }) {
   )
 }
 
-// ═══════════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════════
 export default function CanaanRoadWatch() {
   const [roads, setRoads] = useState([])
   const [reports, setReports] = useState([])
@@ -389,7 +374,7 @@ export default function CanaanRoadWatch() {
   const handleUpvote = async (reportId) => {
     const fp = getFingerprint()
     const { error: upErr } = await supabase.from('upvotes').insert({ report_id: reportId, fingerprint: fp })
-    if (upErr?.code === '23505') return // already voted
+    if (upErr?.code === '23505') return
     const r = reports.find(x => x.id === reportId)
     if (r) await supabase.from('reports').update({ upvotes: (r.upvotes || 0) + 1 }).eq('id', reportId)
     fetchData()
@@ -451,6 +436,14 @@ export default function CanaanRoadWatch() {
                   color: view === v ? '#fff' : 'rgba(255,255,255,0.4)',
                 }}>{v}</button>
               ))}
+              <a href="/map" style={{
+                padding: '6px 12px', borderRadius: 5,
+                fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                background: 'transparent',
+                color: 'rgba(255,255,255,0.4)',
+                textDecoration: 'none',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}>🗺 map</a>
             </div>
             <button onClick={() => setShowAddRoad(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 10, letterSpacing: 0.5 }}>+ Add Road</button>
             <button onClick={() => setShowNewReport(true)} style={{ ...btnBase, padding: '8px 14px', background: 'linear-gradient(135deg, #ff4444, #cc0000)', color: '#fff', fontSize: 10, letterSpacing: 1, boxShadow: '0 0 16px rgba(255,68,68,0.3)' }}>+ Report Issue</button>
@@ -460,7 +453,7 @@ export default function CanaanRoadWatch() {
 
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '16px 16px 60px' }}>
 
-        {/* ═══ DASHBOARD ═══ */}
+        {/* DASHBOARD */}
         {view === 'dashboard' && (
           <div>
             {criticalRoads > 0 && (
@@ -520,7 +513,7 @@ export default function CanaanRoadWatch() {
           </div>
         )}
 
-        {/* ═══ ROADS GRID ═══ */}
+        {/* ROADS GRID */}
         {view === 'roads' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -555,7 +548,7 @@ export default function CanaanRoadWatch() {
           </div>
         )}
 
-        {/* ═══ REPORTS ═══ */}
+        {/* REPORTS */}
         {view === 'reports' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
@@ -598,7 +591,6 @@ export default function CanaanRoadWatch() {
                         {road && <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>on {road.name}</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>{report.description}</div>
-                      {/* Inline photo thumbnail */}
                       {report.photo_url && (
                         <div style={{ marginTop: 8, borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', maxWidth: 200 }}>
                           <img src={report.photo_url} alt="Report" style={{ width: '100%', maxHeight: 120, objectFit: 'cover', display: 'block' }}
