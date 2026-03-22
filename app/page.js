@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from './supabase'
+import { useAuth } from './components/AuthProvider'
+import AuthModal from './components/AuthModal'
+import AdminPanel from './components/AdminPanel'
 
 const STATUS_COLORS = {
   critical: { bg: '#ff1a1a', text: '#fff' },
@@ -395,7 +398,107 @@ function EditRoadModal({ road, onClose, onSaved }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════
+// ROAD CLEAR SUBMISSION MODAL
+// ═══════════════════════════════════════════════════════════
+function RoadClearModal({ report, onClose, onSubmitted }) {
+  const [note, setNote] = useState('')
+  const [photo, setPhoto] = useState(null)
+  const [photoPreview, setPhotoPreview] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const { user } = useAuth()
+  const fileRef = useRef(null)
+
+  const handlePhoto = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) { alert('Photo must be under 5MB'); return }
+    setPhoto(file)
+    const reader = new FileReader()
+    reader.onloadend = () => setPhotoPreview(reader.result)
+    reader.readAsDataURL(file)
+  }
+
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    let photoUrl = null
+    if (photo) {
+      const ext = photo.name.split('.').pop()
+      const fileName = `clear-${Date.now()}.${ext}`
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from('report-photos')
+        .upload(fileName, photo, { cacheControl: '3600', upsert: false })
+      if (!uploadErr && uploadData) {
+        const { data: urlData } = supabase.storage.from('report-photos').getPublicUrl(fileName)
+        photoUrl = urlData?.publicUrl || null
+      }
+    }
+    const { error } = await supabase.from('road_clear_submissions').insert({
+      report_id: report.id,
+      submitted_by: user.id,
+      submitted_email: user.email,
+      photo_url: photoUrl,
+      note: note.trim() || null,
+      status: 'pending',
+    })
+    setSubmitting(false)
+    if (!error) { setSubmitted(true); setTimeout(() => { onSubmitted(); onClose() }, 1500) }
+    else alert('Error: ' + error.message)
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#14171f', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440 }}>
+        {submitted ? (
+          <div style={{ textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>✓</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#22c55e' }}>Submitted for Review</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8 }}>An admin will review and approve the road clear.</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#22c55e', marginBottom: 4 }}>Submit Road Clear</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>Upload a photo showing the road is now clear. An admin will review and mark it resolved.</div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Photo (required)</label>
+              <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
+              <button onClick={() => fileRef.current?.click()} style={{
+                ...btnBase, padding: '10px 16px',
+                background: photo ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${photo ? '#22c55e' : 'rgba(255,255,255,0.1)'}`,
+                color: photo ? '#22c55e' : 'rgba(255,255,255,0.5)',
+              }}>
+                {photo ? '✓ Photo Attached' : '📷 Add Photo'}
+              </button>
+              {photoPreview && (
+                <div style={{ marginTop: 10, borderRadius: 8, overflow: 'hidden' }}>
+                  <img src={photoPreview} alt="Preview" style={{ width: '100%', maxHeight: 200, objectFit: 'cover' }} />
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>Note (optional)</label>
+              <textarea value={note} onChange={e => setNote(e.target.value)}
+                placeholder="Road has been graded / Pothole filled by town crew..."
+                rows={3} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={onClose} style={{ ...btnBase, flex: 1, padding: 12, background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>Cancel</button>
+              <button onClick={handleSubmit} disabled={!photo || submitting} style={{
+                ...btnBase, flex: 1, padding: 12,
+                background: photo ? '#22c55e' : '#333', color: photo ? '#000' : '#fff',
+              }}>{submitting ? 'Submitting...' : 'Submit for Review'}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function CanaanRoadWatch() {
+  const { user, isAdmin, isLoggedIn, canEditReport, canSubmitClear, canUpdateStatus, signOut } = useAuth()
   const [roads, setRoads] = useState([])
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
@@ -407,8 +510,11 @@ export default function CanaanRoadWatch() {
   const [showAddRoad, setShowAddRoad] = useState(false)
   const [editRoad, setEditRoad] = useState(null)
   const [disputeReport, setDisputeReport] = useState(null)
+  const [clearReport, setClearReport] = useState(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [sortBy, setSortBy] = useState('severity')
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showAdminPanel, setShowAdminPanel] = useState(false)
 
   const fetchData = useCallback(async () => {
     const [roadsRes, reportsRes] = await Promise.all([
@@ -458,6 +564,11 @@ export default function CanaanRoadWatch() {
     if (upErr?.code === '23505') return
     const r = reports.find(x => x.id === reportId)
     if (r) await supabase.from('reports').update({ upvotes: (r.upvotes || 0) + 1 }).eq('id', reportId)
+    fetchData()
+  }
+
+  const handleSetStatus = async (reportId, status) => {
+    await supabase.from('reports').update({ status }).eq('id', reportId)
     fetchData()
   }
 
@@ -526,6 +637,18 @@ export default function CanaanRoadWatch() {
                 display: 'inline-flex', alignItems: 'center', gap: 4,
               }}>🗺 map</a>
             </div>
+            {/* AUTH CONTROLS */}
+            {isLoggedIn ? (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {isAdmin && (
+                  <button onClick={() => setShowAdminPanel(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.3)', color: '#ff8c00', fontSize: 10, letterSpacing: 0.5 }}>⚙ Admin</button>
+                )}
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono'" }}>{user.email?.split('@')[0]}</div>
+                <button onClick={signOut} style={{ ...btnBase, padding: '6px 10px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Sign Out</button>
+              </div>
+            ) : (
+              <button onClick={() => setShowAuthModal(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)', fontSize: 10, letterSpacing: 0.5 }}>Sign In</button>
+            )}
             <button onClick={() => setShowAddRoad(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 10, letterSpacing: 0.5 }}>+ Add Road</button>
             <button onClick={() => setShowNewReport(true)} style={{ ...btnBase, padding: '8px 14px', background: 'linear-gradient(135deg, #ff4444, #cc0000)', color: '#fff', fontSize: 10, letterSpacing: 1, boxShadow: '0 0 16px rgba(255,68,68,0.3)' }}>+ Report Issue</button>
           </div>
@@ -717,6 +840,25 @@ export default function CanaanRoadWatch() {
                         {(report.status === 'resolved' || report.status === 'in_progress') && (
                           <button onClick={(e) => { e.stopPropagation(); setDisputeReport(report) }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(255,20,147,0.1)', border: '1px solid rgba(255,20,147,0.3)', color: '#ff1493', fontSize: 10 }}>⚑ Dispute</button>
                         )}
+                        {/* Road clear — logged in users only */}
+                        {canSubmitClear && report.status === 'open' && (
+                          <button onClick={(e) => { e.stopPropagation(); setClearReport(report) }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 10 }}>📷 Submit Clear</button>
+                        )}
+                        {/* Admin/worker status controls */}
+                        {canUpdateStatus && (
+                          <>
+                            {report.status !== 'in_progress' && (
+                              <button onClick={(e) => { e.stopPropagation(); handleSetStatus(report.id, 'in_progress') }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', color: '#ff8c00', fontSize: 10 }}>▶ In Progress</button>
+                            )}
+                            {report.status !== 'resolved' && (
+                              <button onClick={(e) => { e.stopPropagation(); handleSetStatus(report.id, 'resolved') }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 10 }}>✓ Resolve</button>
+                            )}
+                          </>
+                        )}
+                        {/* Sign in prompt if anonymous */}
+                        {!isLoggedIn && report.status === 'open' && (
+                          <button onClick={(e) => { e.stopPropagation(); setShowAuthModal(true) }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Sign in to submit clear</button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -739,6 +881,9 @@ export default function CanaanRoadWatch() {
       {showAddRoad && <AddRoadModal onClose={() => setShowAddRoad(false)} onAdded={fetchData} />}
       {editRoad && <EditRoadModal road={editRoad} onClose={() => setEditRoad(null)} onSaved={fetchData} />}
       {disputeReport && <DisputeModal report={disputeReport} onClose={() => setDisputeReport(null)} onSubmitted={fetchData} />}
+      {clearReport && <RoadClearModal report={clearReport} onClose={() => setClearReport(null)} onSubmitted={fetchData} />}
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} onSuccess={() => setShowAuthModal(false)} />}
+      {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} />}
     </div>
   )
 }
