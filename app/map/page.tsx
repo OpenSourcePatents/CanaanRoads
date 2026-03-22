@@ -54,29 +54,46 @@ export default function MapPage() {
 
   useEffect(() => {
     async function loadData() {
-      const { data: roadsData } = await supabase
-        .from('roads')
-        .select('id, name, osm_id, highway, lat, lng')
-        .order('name')
-        .range(0, 2000);
+      // Fetch all roads in two batches to bypass 1000 row limit
+      const [batch1, batch2] = await Promise.all([
+        supabase.from('roads').select('id, name, osm_id, highway, lat, lng').order('name').range(0, 999),
+        supabase.from('roads').select('id, name, osm_id, highway, lat, lng').order('name').range(1000, 1999),
+      ]);
+      const allRoads = [...(batch1.data || []), ...(batch2.data || [])];
 
-      const { data: reportsData } = await supabase
-        .from('reports')
-        .select('road_id');
+      // Fetch all reports
+      const { data: reportsData } = await supabase.from('reports').select('road_id');
 
+      // Count reports per road id
       const reportCounts: Record<number, number> = {};
       (reportsData || []).forEach((r: Report) => {
         reportCounts[r.road_id] = (reportCounts[r.road_id] || 0) + 1;
       });
 
-      const enriched = (roadsData || []).map((road: Omit<Road, 'report_count'>) => ({
+      // Enrich with report counts
+      const enriched: Road[] = allRoads.map((road: Omit<Road, 'report_count'>) => ({
         ...road,
         report_count: reportCounts[road.id] || 0,
       }));
 
-      setRoads(enriched);
+      // Deduplicate by name — keep highest report count, prefer road with lat/lng
+      const deduped: Road[] = Object.values(
+        enriched.reduce((acc: Record<string, Road>, road: Road) => {
+          const key = road.name.toLowerCase();
+          if (!acc[key]) {
+            acc[key] = road;
+          } else if (road.report_count > acc[key].report_count) {
+            acc[key] = road;
+          } else if (road.report_count === acc[key].report_count && road.lat && !acc[key].lat) {
+            acc[key] = road;
+          }
+          return acc;
+        }, {})
+      );
+
+      setRoads(deduped);
       setLoading(false);
-      return enriched;
+      return deduped;
     }
 
     async function initMap() {
