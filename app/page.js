@@ -336,6 +336,65 @@ function DisputeModal({ report, onClose, onSubmitted }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════
+// EDIT ROAD DETAILS MODAL
+// ═══════════════════════════════════════════════════════════
+function EditRoadModal({ road, onClose, onSaved }) {
+  const [segment, setSegment] = useState(road.segment || '')
+  const [miles, setMiles] = useState(road.miles || '')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    const { error } = await supabase
+      .from('roads')
+      .update({
+        segment: segment.trim() || null,
+        miles: miles ? parseFloat(miles) : null,
+      })
+      .eq('name', road.name)
+    setSubmitting(false)
+    if (!error) { setSubmitted(true); setTimeout(() => { onSaved(); onClose() }, 1200) }
+    else alert('Error saving: ' + error.message)
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#14171f', border: '1px solid rgba(74,158,255,0.3)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 440 }}>
+        {submitted ? (
+          <div style={{ textAlign: 'center', padding: 20 }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>✓</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#4a9eff' }}>Details Updated</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8 }}>Thanks for improving the map.</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#4a9eff', marginBottom: 4 }}>Edit Road Details</div>
+            <div style={{ fontSize: 13, color: '#fff', marginBottom: 4 }}>{road.name}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>Help the community by adding accurate route info. Anyone can edit — be factual.</div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Segment / Route Description</label>
+              <input value={segment} onChange={e => setSegment(e.target.value)} placeholder="e.g. Route 4 to Canaan Center, Full Length, etc." style={inputStyle} />
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>Describe which part of the road this covers, or note key intersections.</div>
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>Length (miles)</label>
+              <input value={miles} onChange={e => setMiles(e.target.value)} placeholder="e.g. 2.5" type="number" step="0.1" min="0" style={inputStyle} />
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>Approximate length in miles. Check Google Maps if unsure.</div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={onClose} style={{ ...btnBase, flex: 1, padding: 12, background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }}>Cancel</button>
+              <button onClick={handleSubmit} disabled={submitting} style={{ ...btnBase, flex: 1, padding: 12, background: 'rgba(74,158,255,0.8)', color: '#fff' }}>{submitting ? 'Saving...' : 'Save Details'}</button>
+            </div>
+            <p style={{ textAlign: 'center', marginTop: 12, fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>No account required. Edits are public and community-maintained.</p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function CanaanRoadWatch() {
   const [roads, setRoads] = useState([])
   const [reports, setReports] = useState([])
@@ -346,6 +405,7 @@ export default function CanaanRoadWatch() {
   const [selectedReport, setSelectedReport] = useState(null)
   const [showNewReport, setShowNewReport] = useState(false)
   const [showAddRoad, setShowAddRoad] = useState(false)
+  const [editRoad, setEditRoad] = useState(null)
   const [disputeReport, setDisputeReport] = useState(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [sortBy, setSortBy] = useState('severity')
@@ -520,7 +580,8 @@ export default function CanaanRoadWatch() {
                   <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{road.name}</div>
                   <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.segment}{road.miles ? ` · ${road.miles} mi` : ''}</div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button onClick={e => { e.stopPropagation(); setEditRoad(road) }} style={{ ...btnBase, padding: '4px 8px', background: 'rgba(74,158,255,0.1)', border: '1px solid rgba(74,158,255,0.2)', color: '#4a9eff', fontSize: 9 }}>✏ Edit</button>
                   <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.open_reports > 0 ? `${road.open_reports} open` : 'Clear'}</span>
                   <span style={{
                     padding: '3px 8px', borderRadius: 4,
@@ -676,6 +737,7 @@ export default function CanaanRoadWatch() {
 
       {showNewReport && <ReportModal roads={roads} onClose={() => setShowNewReport(false)} onSubmitted={fetchData} />}
       {showAddRoad && <AddRoadModal onClose={() => setShowAddRoad(false)} onAdded={fetchData} />}
+      {editRoad && <EditRoadModal road={editRoad} onClose={() => setEditRoad(null)} onSaved={fetchData} />}
       {disputeReport && <DisputeModal report={disputeReport} onClose={() => setDisputeReport(null)} onSubmitted={fetchData} />}
     </div>
   )
