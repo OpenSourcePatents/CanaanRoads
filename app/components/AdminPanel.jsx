@@ -99,4 +99,19 @@ export default function AdminPanel({ onClose }) {
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{report.roads?.name || 'Road #' + report.road_id} <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{report.report_type?.replace('_', ' ')}</span></div>
                         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 }}>{report.description?.slice(0, 100) || 'No description'}</div>
-                        <div style={{ fontSize: 9, color: 'rgba(255,255,
+                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', marginTop: 4, fontFamily: "'JetBrains Mono'" }}>STATUS: {report.status?.toUpperCase()} · {new Date(report.created_at).toLocaleDateString()}</div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginLeft: 16 }}>
+                        {report.status !== 'in_progress' && <button style={btnStyle('#ff8c00')} onClick={() => setReportStatus(report.id, 'in_progress')}>In Progress</button>}
+                        <button style={btnStyle('#22c55e')} onClick={() => setReportStatus(report.id, 'resolved')}>Resolve</button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
