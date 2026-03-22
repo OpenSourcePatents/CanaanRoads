@@ -5,6 +5,9 @@ import { supabase } from './supabase'
 import { useAuth } from './components/AuthProvider'
 import AuthModal from './components/AuthModal'
 import AdminPanel from './components/AdminPanel'
+import RoadClosureModal, { reopenRoad } from './components/RoadClosureModal'
+import SafetyAlertModal from './components/SafetyAlertModal'
+import ConstructionNoticeModal from './components/ConstructionNoticeModal'
 
 const STATUS_COLORS = {
   critical: { bg: '#ff1a1a', text: '#fff' },
@@ -25,6 +28,14 @@ const TYPE_LABELS = {
   drainage: 'Drainage Issue', washout: 'Washout', signage: 'Signage', other: 'Other',
 }
 
+const ALERT_TYPE_LABELS = {
+  drunk_driver: '🍺 Drunk Driver', accident: '💥 Accident', hazard: '⚠️ Hazard',
+  pursuit: '🚔 Pursuit', downed_lines: '⚡ Downed Lines', fire: '🔥 Fire',
+  flood: '🌊 Flooding', other: '❗ Other',
+}
+
+const SEVERITY_COLORS = { low: '#ffd700', medium: '#ff8c00', high: '#ff4444', critical: '#ff1a1a' }
+
 function getFingerprint() {
   if (typeof window === 'undefined') return 'server'
   let fp = localStorage.getItem('crw_fp')
@@ -33,6 +44,14 @@ function getFingerprint() {
 }
 
 function daysSince(d) { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000) }
+function timeAgo(d) {
+  const mins = Math.floor((Date.now() - new Date(d).getTime()) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
 
 const labelStyle = { fontSize: 11, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 6 }
 const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box' }
@@ -497,8 +516,13 @@ function RoadClearModal({ report, onClose, onSubmitted }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════
 export default function CanaanRoadWatch() {
-  const { user, isAdmin, isLoggedIn, canEditReport, canSubmitClear, canUpdateStatus, signOut } = useAuth()
+  const { user, isAdmin, isLoggedIn, isOfficial, isPolice, isAgent, canEditReport, canSubmitClear, canUpdateStatus, canClosureRoad, canCreateAlert, canPostConstruction, signOut, role } = useAuth()
+
+  // Existing state
   const [roads, setRoads] = useState([])
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
@@ -516,15 +540,28 @@ export default function CanaanRoadWatch() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showAdminPanel, setShowAdminPanel] = useState(false)
 
+  // NEW: closure, alert, construction state
+  const [closures, setClosures] = useState([])
+  const [alerts, setAlerts] = useState([])
+  const [notices, setNotices] = useState([])
+  const [closureRoad, setClosureRoad] = useState(null)       // road to close
+  const [showAlertModal, setShowAlertModal] = useState(false)
+  const [showConstructionModal, setShowConstructionModal] = useState(false)
+
   const fetchData = useCallback(async () => {
-    const [roadsRes, reportsRes] = await Promise.all([
+    const [roadsRes, reportsRes, closuresRes, alertsRes, noticesRes] = await Promise.all([
       Promise.all([
         supabase.from('road_status').select('*').order('name').range(0, 999),
         supabase.from('road_status').select('*').order('name').range(1000, 1999),
       ]).then(([r1, r2]) => ({ data: [...(r1.data || []), ...(r2.data || [])], error: r1.error || r2.error })),
       supabase.from('reports').select('*').order('created_at', { ascending: false }),
+      supabase.from('road_closures').select('*, roads(name)').is('actual_end', null).order('created_at', { ascending: false }),
+      supabase.from('safety_alerts').select('*, roads(name)').eq('active', true).order('created_at', { ascending: false }),
+      supabase.from('construction_notices').select('*, roads(name)').in('status', ['scheduled', 'active', 'delayed']).order('starts_at', { ascending: true }),
     ])
+
     if (roadsRes.error) { setError(roadsRes.error.message); return }
+
     const rawRoads = roadsRes.data || []
     const dedupedRoads = Object.values(
       rawRoads.reduce((acc, road) => {
@@ -543,17 +580,25 @@ export default function CanaanRoadWatch() {
         return acc
       }, {})
     ).sort((a, b) => a.name.localeCompare(b.name))
-    setRoads(dedupedRoads)  
+
+    setRoads(dedupedRoads)
     setReports(reportsRes.data || [])
+    setClosures(closuresRes.data || [])
+    setAlerts(alertsRes.data || [])
+    setNotices(noticesRes.data || [])
     setLoading(false)
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Realtime subscriptions — includes new tables
   useEffect(() => {
     const ch = supabase.channel('live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reports' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'roads' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'road_closures' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'safety_alerts' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'construction_notices' }, () => fetchData())
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [fetchData])
@@ -572,6 +617,16 @@ export default function CanaanRoadWatch() {
     fetchData()
   }
 
+  const handleReopenRoad = async (closureId) => {
+    await reopenRoad(closureId)
+    fetchData()
+  }
+
+  const handleResolveAlert = async (alertId) => {
+    await supabase.from('safety_alerts').update({ active: false, resolved_at: new Date().toISOString() }).eq('id', alertId)
+    fetchData()
+  }
+
   const filteredReports = reports
     .filter(r => filterStatus === 'all' || r.status === filterStatus)
     .filter(r => !selectedRoad || r.road_id === selectedRoad.id)
@@ -585,6 +640,15 @@ export default function CanaanRoadWatch() {
   const openCount = reports.filter(r => r.status === 'open').length
   const disputedCount = reports.filter(r => r.status === 'disputed').length
   const criticalRoads = roads.filter(r => r.status === 'critical').length
+  const closedRoads = closures.length
+  const activeAlerts = alerts.length
+  const activeConstruction = notices.filter(n => n.status === 'active' || n.status === 'delayed').length
+
+  // Build a set of closed road IDs for quick lookup
+  const closedRoadIds = new Set(closures.map(c => c.road_id))
+
+  // Role label for header
+  const ROLE_DISPLAY = { admin: '⚙ ADMIN', police: '🚔 POLICE', road_agent: '🔧 AGENT', road_worker: '🔧 WORKER' }
 
   if (loading) return (
     <div style={{ minHeight: '100vh', background: '#0a0c10', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -637,13 +701,24 @@ export default function CanaanRoadWatch() {
                 display: 'inline-flex', alignItems: 'center', gap: 4,
               }}>🗺 map</a>
             </div>
+
             {/* AUTH CONTROLS */}
             {isLoggedIn ? (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 {isAdmin && (
                   <button onClick={() => setShowAdminPanel(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.3)', color: '#ff8c00', fontSize: 10, letterSpacing: 0.5 }}>⚙ Admin</button>
                 )}
-                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono'" }}>{user.email?.split('@')[0]}</div>
+                {/* Official action buttons — alert + construction */}
+                {isOfficial && (
+                  <>
+                    <button onClick={() => setShowAlertModal(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(255,68,68,0.12)', border: '1px solid rgba(255,68,68,0.3)', color: '#ff4444', fontSize: 10, letterSpacing: 0.5 }}>🚨 Alert</button>
+                    <button onClick={() => setShowConstructionModal(true)} style={{ ...btnBase, padding: '8px 12px', background: 'rgba(255,140,0,0.12)', border: '1px solid rgba(255,140,0,0.3)', color: '#ff8c00', fontSize: 10, letterSpacing: 0.5 }}>🔶 Construction</button>
+                  </>
+                )}
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono'" }}>
+                  {user.email?.split('@')[0]}
+                  {ROLE_DISPLAY[role] && <span style={{ marginLeft: 6, color: role === 'police' ? '#a855f7' : role === 'admin' ? '#ff8c00' : '#4a9eff' }}>{ROLE_DISPLAY[role]}</span>}
+                </div>
                 <button onClick={signOut} style={{ ...btnBase, padding: '6px 10px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)', fontSize: 10 }}>Sign Out</button>
               </div>
             ) : (
@@ -660,6 +735,82 @@ export default function CanaanRoadWatch() {
         {/* DASHBOARD */}
         {view === 'dashboard' && (
           <div>
+            {/* ACTIVE CLOSURES BANNER */}
+            {closedRoads > 0 && (
+              <div style={{ background: 'linear-gradient(135deg, rgba(255,68,68,0.15), rgba(255,68,68,0.05))', border: '1px solid rgba(255,68,68,0.3)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 20 }}>🚧</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#ff4444' }}>{closedRoads} Road{closedRoads !== 1 ? 's' : ''} Closed</span>
+                </div>
+                {closures.map(c => (
+                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>{c.roads?.name || 'Road'}</span>
+                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginLeft: 8 }}>{c.reason?.replace('_', ' ')}</span>
+                      {c.description && <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginLeft: 6 }}>— {c.description}</span>}
+                    </div>
+                    {canClosureRoad && (
+                      <button onClick={() => handleReopenRoad(c.id)} style={{ ...btnBase, padding: '4px 10px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 9 }}>✓ Reopen</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ACTIVE SAFETY ALERTS BANNER */}
+            {alerts.length > 0 && (
+              <div style={{ background: 'linear-gradient(135deg, rgba(255,140,0,0.12), rgba(255,140,0,0.04))', border: '1px solid rgba(255,140,0,0.25)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 20 }}>🚨</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#ff8c00' }}>{alerts.length} Active Alert{alerts.length !== 1 ? 's' : ''}</span>
+                </div>
+                {alerts.map(a => {
+                  const sevColor = SEVERITY_COLORS[a.severity] || '#ff8c00'
+                  return (
+                    <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: sevColor }}>{ALERT_TYPE_LABELS[a.alert_type] || a.alert_type}</span>
+                          <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${sevColor}22`, color: sevColor, fontWeight: 700, textTransform: 'uppercase' }}>{a.severity}</span>
+                          {a.visibility !== 'public' && (
+                            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)' }}>{a.visibility === 'officials_only' ? '🔒' : '🔐'}</span>
+                          )}
+                          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)' }}>{timeAgo(a.created_at)}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 2, lineHeight: 1.4 }}>{a.description}</div>
+                        {a.roads?.name && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>📍 {a.roads.name}</div>}
+                      </div>
+                      {canCreateAlert && (
+                        <button onClick={() => handleResolveAlert(a.id)} style={{ ...btnBase, padding: '4px 10px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 9, flexShrink: 0, marginLeft: 10 }}>✓ Resolve</button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* ACTIVE CONSTRUCTION NOTICES */}
+            {notices.length > 0 && (
+              <div style={{ background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.15)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 20 }}>🔶</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#ff8c00' }}>{notices.length} Construction Notice{notices.length !== 1 ? 's' : ''}</span>
+                </div>
+                {notices.map(n => (
+                  <div key={n.id} style={{ padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>{n.title}</span>
+                      <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: n.status === 'active' ? 'rgba(255,140,0,0.2)' : n.status === 'delayed' ? 'rgba(255,68,68,0.2)' : 'rgba(74,158,255,0.2)', color: n.status === 'active' ? '#ff8c00' : n.status === 'delayed' ? '#ff4444' : '#4a9eff', fontWeight: 700, textTransform: 'uppercase' }}>{n.status}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
+                      {n.roads?.name} · {n.starts_at}{n.estimated_end ? ` → ${n.estimated_end}` : ''}
+                    </div>
+                    {n.detour_info && <div style={{ fontSize: 10, color: '#4a9eff', marginTop: 2 }}>↗ Detour: {n.detour_info}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {criticalRoads > 0 && (
               <div style={{ background: 'linear-gradient(135deg, rgba(255,20,20,0.12), rgba(255,68,68,0.06))', border: '1px solid rgba(255,68,68,0.25)', borderRadius: 12, padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 22 }}>⚠</span>
@@ -670,51 +821,67 @@ export default function CanaanRoadWatch() {
               </div>
             )}
 
-            {reports.length === 0 && (
+            {reports.length === 0 && closedRoads === 0 && activeAlerts === 0 && (
               <div style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 12, padding: '22px 18px', marginBottom: 16, textAlign: 'center' }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: '#22c55e', marginBottom: 6 }}>All Roads Clear</div>
                 <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>No issues reported. See a problem? Hit "Report Issue" above.</div>
               </div>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
+            {/* DASHBOARD COUNTERS — now includes closures, alerts, construction */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, marginBottom: 20 }}>
               {[
                 { l: 'OPEN', v: openCount, c: '#ff4444' },
                 { l: 'DISPUTED', v: disputedCount, c: '#ff1493' },
                 { l: 'CRITICAL', v: criticalRoads, c: '#ff8c00' },
+                { l: 'CLOSED', v: closedRoads, c: '#ff1a1a' },
+                { l: 'ALERTS', v: activeAlerts, c: '#a855f7' },
+                { l: 'CONSTRUCT.', v: activeConstruction, c: '#ff8c00' },
                 { l: 'ROADS', v: roads.length, c: '#4a9eff' },
               ].map((s, i) => (
-                <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '14px 12px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono'" }}>{s.v}</div>
+                <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '14px 8px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono'" }}>{s.v}</div>
                   <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', letterSpacing: 2, marginTop: 2 }}>{s.l}</div>
                 </div>
               ))}
             </div>
 
             <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', marginBottom: 10 }}>All Roads ({roads.length})</div>
-            {roads.map(road => (
-              <div key={road.id} onClick={() => { setSelectedRoad(road); setView('reports') }} style={{
-                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                borderLeft: `3px solid ${(STATUS_COLORS[road.status] || STATUS_COLORS.good).bg}`,
-                borderRadius: 8, padding: '12px 16px', marginBottom: 6, cursor: 'pointer',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{road.name}</div>
-                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.segment}{road.miles ? ` · ${road.miles} mi` : ''}</div>
+            {roads.map(road => {
+              const isClosed = closedRoadIds.has(road.id)
+              return (
+                <div key={road.id} onClick={() => { setSelectedRoad(road); setView('reports') }} style={{
+                  background: isClosed ? 'rgba(255,68,68,0.06)' : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${isClosed ? 'rgba(255,68,68,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                  borderLeft: `3px solid ${isClosed ? '#ff1a1a' : (STATUS_COLORS[road.status] || STATUS_COLORS.good).bg}`,
+                  borderRadius: 8, padding: '12px 16px', marginBottom: 6, cursor: 'pointer',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>
+                      {isClosed && <span style={{ marginRight: 6 }}>🚧</span>}
+                      {road.name}
+                      {isClosed && <span style={{ fontSize: 10, color: '#ff4444', fontWeight: 700, marginLeft: 8 }}>CLOSED</span>}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.segment}{road.miles ? ` · ${road.miles} mi` : ''}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {/* Close Road button for officials */}
+                    {canClosureRoad && !isClosed && (
+                      <button onClick={e => { e.stopPropagation(); setClosureRoad(road) }} style={{ ...btnBase, padding: '4px 8px', background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.2)', color: '#ff4444', fontSize: 9 }}>🚧</button>
+                    )}
+                    <button onClick={e => { e.stopPropagation(); setEditRoad(road) }} style={{ ...btnBase, padding: '4px 8px', background: 'rgba(74,158,255,0.1)', border: '1px solid rgba(74,158,255,0.2)', color: '#4a9eff', fontSize: 9 }}>✏ Edit</button>
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.open_reports > 0 ? `${road.open_reports} open` : 'Clear'}</span>
+                    <span style={{
+                      padding: '3px 8px', borderRadius: 4,
+                      background: isClosed ? '#ff1a1a' : (STATUS_COLORS[road.status] || STATUS_COLORS.good).bg,
+                      color: isClosed ? '#fff' : (STATUS_COLORS[road.status] || STATUS_COLORS.good).text,
+                      fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
+                    }}>{isClosed ? 'CLOSED' : road.status}</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button onClick={e => { e.stopPropagation(); setEditRoad(road) }} style={{ ...btnBase, padding: '4px 8px', background: 'rgba(74,158,255,0.1)', border: '1px solid rgba(74,158,255,0.2)', color: '#4a9eff', fontSize: 9 }}>✏ Edit</button>
-                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.open_reports > 0 ? `${road.open_reports} open` : 'Clear'}</span>
-                  <span style={{
-                    padding: '3px 8px', borderRadius: 4,
-                    background: (STATUS_COLORS[road.status] || STATUS_COLORS.good).bg,
-                    color: (STATUS_COLORS[road.status] || STATUS_COLORS.good).text,
-                    fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
-                  }}>{road.status}</span>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
@@ -728,24 +895,32 @@ export default function CanaanRoadWatch() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
               {roads.map(road => {
                 const openReps = reports.filter(r => r.road_id === road.id && (r.status === 'open' || r.status === 'disputed')).length
+                const isClosed = closedRoadIds.has(road.id)
                 return (
                   <div key={road.id} onClick={() => { setSelectedRoad(road); setView('reports') }} style={{
-                    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                    background: isClosed ? 'rgba(255,68,68,0.06)' : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${isClosed ? 'rgba(255,68,68,0.2)' : 'rgba(255,255,255,0.06)'}`,
                     borderRadius: 10, padding: 16, cursor: 'pointer',
-                    borderLeft: `3px solid ${(STATUS_COLORS[road.status] || STATUS_COLORS.good).bg}`,
+                    borderLeft: `3px solid ${isClosed ? '#ff1a1a' : (STATUS_COLORS[road.status] || STATUS_COLORS.good).bg}`,
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{road.name}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>
+                          {isClosed && '🚧 '}{road.name}
+                        </div>
                         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{road.segment}{road.miles ? ` · ${road.miles} mi` : ''}</div>
                       </div>
-                      <span style={{ padding: '3px 8px', borderRadius: 4, background: (STATUS_COLORS[road.status] || STATUS_COLORS.good).bg, color: (STATUS_COLORS[road.status] || STATUS_COLORS.good).text, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', height: 'fit-content' }}>{road.status}</span>
+                      <span style={{ padding: '3px 8px', borderRadius: 4, background: isClosed ? '#ff1a1a' : (STATUS_COLORS[road.status] || STATUS_COLORS.good).bg, color: isClosed ? '#fff' : (STATUS_COLORS[road.status] || STATUS_COLORS.good).text, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', height: 'fit-content' }}>{isClosed ? 'CLOSED' : road.status}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 14 }}>
                       <div><div style={{ fontSize: 18, fontWeight: 800, color: openReps > 0 ? '#ff4444' : '#22c55e', fontFamily: "'JetBrains Mono'" }}>{openReps}</div><div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>Open</div></div>
                       <div><div style={{ fontSize: 18, fontWeight: 800, color: 'rgba(255,255,255,0.5)', fontFamily: "'JetBrains Mono'" }}>{road.total_reports}</div><div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>Total</div></div>
                       {road.avg_days_open > 0 && <div><div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: road.avg_days_open > 30 ? '#ff4444' : '#ff8c00' }}>{road.avg_days_open}d</div><div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)' }}>Wait</div></div>}
                     </div>
+                    {/* Close button for officials on road cards */}
+                    {canClosureRoad && !isClosed && (
+                      <button onClick={e => { e.stopPropagation(); setClosureRoad(road) }} style={{ ...btnBase, marginTop: 10, padding: '6px 12px', background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.2)', color: '#ff4444', fontSize: 10, width: '100%' }}>🚧 Close Road</button>
+                    )}
                   </div>
                 )
               })}
@@ -835,7 +1010,7 @@ export default function CanaanRoadWatch() {
                         </div>
                       )}
 
-                      <div style={{ display: 'flex', gap: 6 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         <button onClick={(e) => { e.stopPropagation(); handleUpvote(report.id) }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(74,158,255,0.1)', border: '1px solid rgba(74,158,255,0.3)', color: '#4a9eff', fontSize: 10 }}>▲ Confirm ({report.upvotes || 0})</button>
                         {(report.status === 'resolved' || report.status === 'in_progress') && (
                           <button onClick={(e) => { e.stopPropagation(); setDisputeReport(report) }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(255,20,147,0.1)', border: '1px solid rgba(255,20,147,0.3)', color: '#ff1493', fontSize: 10 }}>⚑ Dispute</button>
@@ -844,7 +1019,7 @@ export default function CanaanRoadWatch() {
                         {canSubmitClear && report.status === 'open' && (
                           <button onClick={(e) => { e.stopPropagation(); setClearReport(report) }} style={{ ...btnBase, padding: '7px 12px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', fontSize: 10 }}>📷 Submit Clear</button>
                         )}
-                        {/* Admin/worker status controls */}
+                        {/* Admin/worker/agent/police status controls */}
                         {canUpdateStatus && (
                           <>
                             {report.status !== 'in_progress' && (
@@ -877,6 +1052,7 @@ export default function CanaanRoadWatch() {
         </p>
       </div>
 
+      {/* ALL MODALS */}
       {showNewReport && <ReportModal roads={roads} onClose={() => setShowNewReport(false)} onSubmitted={fetchData} />}
       {showAddRoad && <AddRoadModal onClose={() => setShowAddRoad(false)} onAdded={fetchData} />}
       {editRoad && <EditRoadModal road={editRoad} onClose={() => setEditRoad(null)} onSaved={fetchData} />}
@@ -884,6 +1060,11 @@ export default function CanaanRoadWatch() {
       {clearReport && <RoadClearModal report={clearReport} onClose={() => setClearReport(null)} onSubmitted={fetchData} />}
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} onSuccess={() => setShowAuthModal(false)} />}
       {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} />}
+
+      {/* NEW MODALS */}
+      {closureRoad && <RoadClosureModal road={closureRoad} onClose={() => setClosureRoad(null)} onSubmitted={fetchData} />}
+      {showAlertModal && <SafetyAlertModal roads={roads} onClose={() => setShowAlertModal(false)} onSubmitted={fetchData} />}
+      {showConstructionModal && <ConstructionNoticeModal roads={roads} onClose={() => setShowConstructionModal(false)} onSubmitted={fetchData} />}
     </div>
   )
 }
